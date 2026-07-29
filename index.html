@@ -185,9 +185,46 @@ function postCard(p){
     <h4>${esc(p.titulo_interno||'Sem título')}</h4>
     <div class="muted" style="font-size:12px;max-height:60px;overflow:hidden;">${esc((p.legenda_atual||'').slice(0,140))}</div>
     ${comments}
-    <button class="btn btn-outline" style="width:100%;margin-top:8px;" onclick="openPostDetail('${p.id}')">Abrir</button>
+    <div class="row" style="margin-top:8px;">
+      <button class="btn btn-outline" style="flex:1;" onclick="openPostDetail('${p.id}')">Abrir</button>
+      <button class="btn btn-outline" style="padding:10px 12px;color:var(--vermelho);border-color:var(--vermelho);" onclick="confirmDeletePost('${p.id}')" title="Excluir">🗑</button>
+    </div>
     ${actions}
   </div>`;
+}
+
+// ---------- EXCLUIR (qualquer status) ----------
+function confirmDeletePost(id){
+  const p = postsById[id];
+  if(!p) return;
+  document.getElementById('modal-root').innerHTML = `
+  <div class="center" style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:50;">
+    <div class="card" style="width:380px;max-width:92vw;">
+      <h3 style="margin-top:0;">Excluir conteúdo?</h3>
+      <p class="muted">"${esc(p.titulo_interno||'Sem título')}" (${statusLabel(p.status)}) — apaga o post, os arquivos, a legenda e o histórico de comentários. Não dá pra desfazer.</p>
+      <div class="row" style="justify-content:flex-end;">
+        <button class="btn btn-outline" onclick="closeModal()">Cancelar</button>
+        <button class="btn" style="background:var(--vermelho);color:#fff;" onclick="doDeletePost('${id}')">Excluir</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+async function doDeletePost(id){
+  const p = postsById[id];
+  const paths = (p?.assets || [])
+    .map(a => a.url.split(`/${POSTA_AI_STORAGE_BUCKET}/`)[1])
+    .filter(Boolean);
+
+  if(paths.length){
+    await postaAiClient.storage.from(POSTA_AI_STORAGE_BUCKET).remove(paths);
+  }
+  const { error } = await postaAiClient.rpc('posta_ai_admin_delete_post', { p_post_id: id });
+  if(error){ toast('Erro ao excluir: '+error.message); return; }
+  delete postsById[id];
+  closeModal();
+  toast('Conteúdo excluído.');
+  loadPosts();
 }
 
 async function sendForApproval(id){
@@ -317,7 +354,8 @@ async function openPostDetail(id){
         <button class="btn btn-outline" onclick="saveCaption('${p.id}')">Salvar legenda</button>
         <button class="btn btn-primary" onclick="copyFullContent('${p.id}')">Copiar legenda + assinatura</button>
       </div>
-      <div class="row" style="justify-content:flex-end;margin-top:20px;">
+      <div class="row-between" style="margin-top:20px;">
+        <button class="btn btn-outline" style="color:var(--vermelho);border-color:var(--vermelho);" onclick="confirmDeletePost('${p.id}')">Excluir conteúdo</button>
         <button class="btn btn-outline" onclick="closeModal()">Fechar</button>
       </div>
     </div>

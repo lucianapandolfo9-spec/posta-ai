@@ -19,6 +19,7 @@ const root = document.getElementById('root');
 let session = null;
 let brands = [];
 let currentBrand = null;
+let postsById = {};
 
 function esc(s){ return (s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function toast(msg){
@@ -167,7 +168,9 @@ async function loadPosts(){
 }
 
 function postCard(p){
+  postsById[p.id] = p;
   const asset = (p.assets && p.assets[0]) || null;
+  const extraCount = (p.assets||[]).length - 1;
   const comments = (p.comentarios||[]).map(c => `<div class="comment"><b>${c.autor==='editor'?'Você':'Cliente'}:</b> ${esc(c.texto)}</div>`).join('');
   let actions = '';
   if(p.status === 'rascunho') actions = `<button class="btn btn-outline" style="width:100%;margin-top:8px;" onclick="sendForApproval('${p.id}')">Enviar pra aprovação</button>`;
@@ -175,10 +178,14 @@ function postCard(p){
   if(p.status === 'agendado') actions = `<div class="muted" style="margin-top:8px;">${p.agendado_para ? new Date(p.agendado_para).toLocaleString('pt-BR') : ''}</div>`;
 
   return `<div class="card post-card">
-    ${asset ? (asset.tipo==='video' ? `<video src="${esc(asset.url)}" muted preload="metadata" style="max-height:180px;object-fit:cover;"></video>` : `<img src="${esc(asset.url)}" style="width:100%;border-radius:8px;max-height:180px;object-fit:cover;">`) : ''}
+    <div style="position:relative;">
+      ${asset ? (asset.tipo==='video' ? `<video src="${esc(asset.url)}" muted preload="metadata" style="max-height:180px;width:100%;object-fit:cover;"></video>` : `<img src="${esc(asset.url)}" style="width:100%;border-radius:8px;max-height:180px;object-fit:cover;">`) : ''}
+      ${extraCount > 0 ? `<span class="tag" style="position:absolute;top:8px;right:8px;background:rgba(0,0,0,.6);color:#fff;">+${extraCount}</span>` : ''}
+    </div>
     <h4>${esc(p.titulo_interno||'Sem título')}</h4>
     <div class="muted" style="font-size:12px;max-height:60px;overflow:hidden;">${esc((p.legenda_atual||'').slice(0,140))}</div>
     ${comments}
+    <button class="btn btn-outline" style="width:100%;margin-top:8px;" onclick="openPostDetail('${p.id}')">Abrir</button>
     ${actions}
   </div>`;
 }
@@ -240,7 +247,7 @@ function openNewPost(){
       <div class="field"><label>Formato</label>
         <select id="np-formato"><option value="reel">Reel</option><option value="feed">Feed</option><option value="story">Story</option><option value="carrossel">Carrossel</option></select>
       </div>
-      <div class="field"><label>Arquivo (vídeo ou imagem)</label><input id="np-file" type="file" accept="video/*,image/*"></div>
+      <div class="field"><label>Arquivos (vídeo ou imagem — selecione vários pra virar carrossel)</label><input id="np-file" type="file" accept="video/*,image/*" multiple></div>
       <div class="field"><label>Legenda</label><textarea id="np-legenda" placeholder="Corpo da legenda (a assinatura padrão entra sozinha na hora de postar)"></textarea></div>
       <div id="np-progress" class="muted"></div>
       <div class="row" style="justify-content:flex-end;">
@@ -256,31 +263,97 @@ async function createPost(){
   const formato = document.getElementById('np-formato').value;
   const legenda = document.getElementById('np-legenda').value;
   const fileInput = document.getElementById('np-file');
-  const file = fileInput.files[0];
+  const files = Array.from(fileInput.files || []);
   const progress = document.getElementById('np-progress');
   const submitBtn = document.getElementById('np-submit');
 
-  if(!file){ toast('Escolhe um arquivo.'); return; }
+  if(!files.length){ toast('Escolhe pelo menos um arquivo.'); return; }
   submitBtn.disabled = true;
-  progress.textContent = 'Enviando arquivo...';
 
-  const path = `${currentBrand.id}/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9.\-_]/g,'_')}`;
-  const { error: upErr } = await postaAiClient.storage.from(POSTA_AI_STORAGE_BUCKET).upload(path, file);
-  if(upErr){ progress.textContent = ''; toast('Erro no upload: '+upErr.message); submitBtn.disabled=false; return; }
-
-  const { data: pub } = postaAiClient.storage.from(POSTA_AI_STORAGE_BUCKET).getPublicUrl(path);
-  const tipo = file.type.startsWith('video') ? 'video' : 'imagem';
+  const assets = [];
+  for(let i = 0; i < files.length; i++){
+    const file = files[i];
+    progress.textContent = `Enviando ${i+1}/${files.length}...`;
+    const path = `${currentBrand.id}/${Date.now()}-${i}-${file.name.replace(/[^a-zA-Z0-9.\-_]/g,'_')}`;
+    const { error: upErr } = await postaAiClient.storage.from(POSTA_AI_STORAGE_BUCKET).upload(path, file);
+    if(upErr){ progress.textContent = ''; toast(`Erro no upload de ${file.name}: `+upErr.message); submitBtn.disabled=false; return; }
+    const { data: pub } = postaAiClient.storage.from(POSTA_AI_STORAGE_BUCKET).getPublicUrl(path);
+    assets.push({ url: pub.publicUrl, tipo: file.type.startsWith('video') ? 'video' : 'imagem', ordem: i });
+  }
 
   progress.textContent = 'Salvando post...';
   const { error } = await postaAiClient.rpc('posta_ai_admin_create_post', {
     p_brand_id: currentBrand.id, p_titulo: titulo, p_formato: formato, p_legenda: legenda,
-    p_assets: [{ url: pub.publicUrl, tipo, ordem: 0 }]
+    p_assets: assets
   });
   if(error){ progress.textContent=''; toast('Erro: '+error.message); submitBtn.disabled=false; return; }
 
   closeModal();
-  toast('Conteúdo criado como rascunho.');
+  toast(`Conteúdo criado como rascunho (${assets.length} arquivo${assets.length>1?'s':''}).`);
   loadPosts();
+}
+
+// ---------- DETALHES / EDITAR (funciona em qualquer status) ----------
+async function openPostDetail(id){
+  const p = postsById[id];
+  if(!p) return;
+  document.getElementById('modal-root').innerHTML = `
+  <div class="center" style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:40;overflow:auto;padding:24px 0;">
+    <div class="card" style="width:560px;max-width:92vw;max-height:88vh;overflow:auto;">
+      <div class="row-between">
+        <h3 style="margin-top:0;">${esc(p.titulo_interno||'Sem título')}</h3>
+        <span class="tag tag-${p.status}">${statusLabel(p.status)}</span>
+      </div>
+      <div id="pd-assets" class="stack"></div>
+      <div class="field" style="margin-top:16px;">
+        <label>Legenda (dá pra editar mesmo já aprovado)</label>
+        <textarea id="pd-legenda">${esc(p.legenda_atual)}</textarea>
+      </div>
+      <div class="field">
+        <label>Assinatura padrão da marca (referência)</label>
+        <textarea id="pd-sig" disabled style="opacity:.7;">Carregando...</textarea>
+      </div>
+      <div class="row" style="flex-wrap:wrap;">
+        <button class="btn btn-outline" onclick="saveCaption('${p.id}')">Salvar legenda</button>
+        <button class="btn btn-primary" onclick="copyFullContent('${p.id}')">Copiar legenda + assinatura</button>
+      </div>
+      <div class="row" style="justify-content:flex-end;margin-top:20px;">
+        <button class="btn btn-outline" onclick="closeModal()">Fechar</button>
+      </div>
+    </div>
+  </div>`;
+
+  const assetsEl = document.getElementById('pd-assets');
+  assetsEl.innerHTML = (p.assets||[]).map((a,i) => `
+    <div class="card" style="padding:10px;">
+      ${a.tipo === 'video' ? `<video src="${esc(a.url)}" controls preload="metadata"></video>` : `<img src="${esc(a.url)}" style="width:100%;border-radius:8px;">`}
+      <div class="row-between" style="margin-top:8px;">
+        <span class="muted">Arquivo ${i+1} · ${a.tipo}</span>
+        <a class="btn btn-outline" style="padding:6px 10px;" href="${esc(a.url)}" target="_blank" rel="noopener">Abrir / baixar</a>
+      </div>
+    </div>
+  `).join('') || '<div class="muted">Sem arquivos.</div>';
+
+  const { data: sig } = await postaAiClient.rpc('posta_ai_admin_get_caption_block', { p_brand_id: currentBrand.id });
+  const sigEl = document.getElementById('pd-sig');
+  if(sigEl){ sigEl.value = sig || ''; }
+}
+
+async function saveCaption(id){
+  const val = document.getElementById('pd-legenda').value;
+  const { error } = await postaAiClient.rpc('posta_ai_admin_update_caption', { p_post_id: id, p_corpo: val });
+  if(error){ toast('Erro: '+error.message); return; }
+  if(postsById[id]) postsById[id].legenda_atual = val;
+  toast('Legenda salva.');
+  loadPosts();
+}
+
+function copyFullContent(id){
+  const legenda = document.getElementById('pd-legenda').value;
+  const sig = document.getElementById('pd-sig').value;
+  const full = sig ? `${legenda}\n\n${sig}` : legenda;
+  navigator.clipboard.writeText(full);
+  toast('Legenda completa copiada — cola direto no Instagram.');
 }
 
 function openSchedule(id){

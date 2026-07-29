@@ -1,0 +1,313 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Posta Aí — painel</title>
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+</head>
+<body>
+
+<div id="root">
+  <div class="empty"><div class="spinner" style="margin:0 auto 12px;"></div>Carregando...</div>
+</div>
+
+<script src="config.js"></script>
+<script>
+const root = document.getElementById('root');
+let session = null;
+let brands = [];
+let currentBrand = null;
+
+function esc(s){ return (s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function toast(msg){
+  const t = document.createElement('div');
+  t.className = 'toast'; t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(()=>t.remove(), 2800);
+}
+function statusLabel(s){
+  return {rascunho:'Rascunho', em_aprovacao:'Aguardando cliente', ajuste_pedido:'Ajuste pedido',
+    aprovado:'Aprovado', agendado:'Agendado', publicando:'Publicando', publicado:'Publicado', falhou:'Falhou'}[s] || s;
+}
+
+// ---------- AUTH ----------
+async function init(){
+  const { data } = await postaAiClient.auth.getSession();
+  session = data.session;
+  postaAiClient.auth.onAuthStateChange((_event, s) => {
+    session = s;
+    render();
+  });
+  render();
+}
+
+function renderLogin(){
+  root.innerHTML = `
+  <div class="topbar"><div class="brandmark"><span class="dot"></span> Posta <span class="panda">Aí</span></div></div>
+  <div class="login-box card">
+    <h2 style="margin-top:0;">Entrar</h2>
+    <p class="muted">Link mágico direto pro seu e-mail.</p>
+    <div class="stack">
+      <input type="email" id="login-email" placeholder="seu@email.com" value="${POSTA_AI_ADMIN_EMAIL}">
+      <button class="btn btn-primary" onclick="doLogin()">Enviar link de acesso</button>
+      <div id="login-msg" class="muted"></div>
+    </div>
+  </div>`;
+}
+
+async function doLogin(){
+  const email = document.getElementById('login-email').value.trim();
+  const msg = document.getElementById('login-msg');
+  msg.textContent = 'Enviando...';
+  const { error } = await postaAiClient.auth.signInWithOtp({
+    email, options:{ emailRedirectTo: location.href.split('?')[0].split('#')[0] }
+  });
+  msg.textContent = error ? 'Erro ao enviar. Tenta de novo.' : 'Link enviado — confere seu e-mail.';
+}
+
+async function logout(){
+  await postaAiClient.auth.signOut();
+  render();
+}
+
+// ---------- APP ----------
+async function render(){
+  if(!session){ renderLogin(); return; }
+
+  root.innerHTML = `
+  <div class="topbar">
+    <div class="brandmark"><span class="dot"></span> Posta <span class="panda">Aí</span></div>
+    <div class="row">
+      <span class="muted">${esc(session.user.email)}</span>
+      <button class="btn btn-outline" onclick="logout()">Sair</button>
+    </div>
+  </div>
+  <div class="wrap">
+    <div class="row-between" style="margin-bottom:20px;flex-wrap:wrap;gap:12px;">
+      <div class="row">
+        <select id="brand-select" style="min-width:220px;"></select>
+        <button class="btn btn-outline" onclick="openNewBrand()">+ Nova marca</button>
+      </div>
+      <button class="btn btn-primary" onclick="openNewPost()" id="new-post-btn" style="display:none;">+ Novo conteúdo</button>
+    </div>
+    <div id="brand-panel"></div>
+    <div id="kanban"></div>
+  </div>
+  <div id="modal-root"></div>
+  `;
+
+  await loadBrands();
+}
+
+async function loadBrands(){
+  const { data, error } = await postaAiClient.rpc('posta_ai_admin_list_brands');
+  if(error){ toast('Erro ao carregar marcas: ' + error.message); return; }
+  brands = data || [];
+  const sel = document.getElementById('brand-select');
+  if(brands.length === 0){
+    sel.innerHTML = `<option>Nenhuma marca ainda</option>`;
+    document.getElementById('brand-panel').innerHTML = `<div class="empty">Crie a primeira marca pra começar (ex: Lymphatic by Gigi).</div>`;
+    return;
+  }
+  sel.innerHTML = brands.map(b => `<option value="${b.id}">${esc(b.nome)}</option>`).join('');
+  sel.onchange = () => selectBrand(sel.value);
+  currentBrand = brands.find(b => b.id === (currentBrand?.id)) || brands[0];
+  sel.value = currentBrand.id;
+  document.getElementById('new-post-btn').style.display = 'inline-flex';
+  renderBrandPanel();
+  loadPosts();
+}
+
+function selectBrand(id){
+  currentBrand = brands.find(b => b.id === id);
+  renderBrandPanel();
+  loadPosts();
+}
+
+function renderBrandPanel(){
+  const b = currentBrand;
+  const link = `${location.origin}${location.pathname.replace('index.html','')}cliente.html?t=${b.secret_token}`;
+  document.getElementById('brand-panel').innerHTML = `
+    <div class="card" style="margin-bottom:20px;">
+      <div class="row-between" style="align-items:flex-start;flex-wrap:wrap;gap:16px;">
+        <div style="flex:1;min-width:260px;">
+          <label>Link secreto de aprovação (mande pra ${esc(b.nome)} no WhatsApp)</label>
+          <div class="copylink">
+            <span style="flex:1;">${esc(link)}</span>
+            <button class="btn btn-outline" style="padding:6px 10px;" onclick="copyLink('${link}')">Copiar</button>
+          </div>
+          <div class="muted" style="margin-top:6px;">Fuso: ${esc(b.timezone)} · Idioma: ${esc(b.idioma)} · @${esc(b.handle||'—')}</div>
+        </div>
+      </div>
+    </div>`;
+}
+
+function copyLink(link){
+  navigator.clipboard.writeText(link);
+  toast('Link copiado.');
+}
+
+async function loadPosts(){
+  const kanbanEl = document.getElementById('kanban');
+  kanbanEl.innerHTML = `<div class="empty"><div class="spinner" style="margin:0 auto;"></div></div>`;
+  const { data, error } = await postaAiClient.rpc('posta_ai_admin_list_posts', { p_brand_id: currentBrand.id });
+  if(error){ kanbanEl.innerHTML = `<div class="empty">Erro: ${esc(error.message)}</div>`; return; }
+
+  const cols = [
+    ['rascunho','Rascunho'], ['em_aprovacao','Aguardando cliente'], ['ajuste_pedido','Ajuste pedido'],
+    ['aprovado','Aprovado'], ['agendado','Agendado'], ['publicado','Publicado']
+  ];
+  const posts = data || [];
+  kanbanEl.innerHTML = `<div class="kanban">${cols.map(([key,label]) => {
+    const items = posts.filter(p => p.status === key);
+    return `<div class="kanban-col"><h3>${label} (${items.length})</h3>${items.map(p => postCard(p)).join('') || '<div class="muted">—</div>'}</div>`;
+  }).join('')}</div>`;
+}
+
+function postCard(p){
+  const asset = (p.assets && p.assets[0]) || null;
+  const comments = (p.comentarios||[]).map(c => `<div class="comment"><b>${c.autor==='editor'?'Você':'Cliente'}:</b> ${esc(c.texto)}</div>`).join('');
+  let actions = '';
+  if(p.status === 'rascunho') actions = `<button class="btn btn-outline" style="width:100%;margin-top:8px;" onclick="sendForApproval('${p.id}')">Enviar pra aprovação</button>`;
+  if(p.status === 'aprovado') actions = `<button class="btn btn-primary" style="width:100%;margin-top:8px;" onclick="openSchedule('${p.id}')">Agendar</button>`;
+  if(p.status === 'agendado') actions = `<div class="muted" style="margin-top:8px;">${p.agendado_para ? new Date(p.agendado_para).toLocaleString('pt-BR') : ''}</div>`;
+
+  return `<div class="card post-card">
+    ${asset ? (asset.tipo==='video' ? `<video src="${esc(asset.url)}" muted preload="metadata" style="max-height:180px;object-fit:cover;"></video>` : `<img src="${esc(asset.url)}" style="width:100%;border-radius:8px;max-height:180px;object-fit:cover;">`) : ''}
+    <h4>${esc(p.titulo_interno||'Sem título')}</h4>
+    <div class="muted" style="font-size:12px;max-height:60px;overflow:hidden;">${esc((p.legenda_atual||'').slice(0,140))}</div>
+    ${comments}
+    ${actions}
+  </div>`;
+}
+
+async function sendForApproval(id){
+  const { error } = await postaAiClient.rpc('posta_ai_admin_send_for_approval', { p_post_id: id });
+  if(error){ toast('Erro: '+error.message); return; }
+  toast('Enviado pra aprovação.');
+  loadPosts();
+}
+
+// ---------- MODALS ----------
+function closeModal(){ document.getElementById('modal-root').innerHTML=''; }
+
+function openNewBrand(){
+  document.getElementById('modal-root').innerHTML = `
+  <div class="center" style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:40;">
+    <div class="card" style="width:420px;max-width:92vw;">
+      <h3 style="margin-top:0;">Nova marca</h3>
+      <div class="field"><label>Workspace</label><input id="nb-ws" type="text" value="Luh Panda"></div>
+      <div class="field"><label>Nome</label><input id="nb-nome" type="text" placeholder="Lymphatic by Gigi"></div>
+      <div class="field"><label>Handle Instagram</label><input id="nb-handle" type="text" placeholder="lymphaticbygigi"></div>
+      <div class="row">
+        <div class="field" style="flex:1;"><label>Fuso</label><input id="nb-tz" type="text" value="America/Los_Angeles"></div>
+        <div class="field" style="flex:1;"><label>Idioma</label><input id="nb-lang" type="text" value="en"></div>
+      </div>
+      <div class="field"><label>Assinatura padrão</label><textarea id="nb-sig" placeholder="Authentic Brazilian Lymphatic method&#10;DM me @lymphaticbygigi 📩&#10;Los Angeles · In-Home & In-Studio"></textarea></div>
+      <div class="row" style="justify-content:flex-end;">
+        <button class="btn btn-outline" onclick="closeModal()">Cancelar</button>
+        <button class="btn btn-primary" onclick="createBrand()">Criar</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+async function createBrand(){
+  const p = {
+    p_workspace_nome: document.getElementById('nb-ws').value.trim(),
+    p_nome: document.getElementById('nb-nome').value.trim(),
+    p_handle: document.getElementById('nb-handle').value.trim(),
+    p_timezone: document.getElementById('nb-tz').value.trim(),
+    p_idioma: document.getElementById('nb-lang').value.trim(),
+    p_assinatura: document.getElementById('nb-sig').value
+  };
+  if(!p.p_nome){ toast('Dá um nome pra marca.'); return; }
+  const { error } = await postaAiClient.rpc('posta_ai_admin_create_brand', p);
+  if(error){ toast('Erro: '+error.message); return; }
+  closeModal();
+  toast('Marca criada.');
+  await loadBrands();
+}
+
+function openNewPost(){
+  document.getElementById('modal-root').innerHTML = `
+  <div class="center" style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:40;">
+    <div class="card" style="width:480px;max-width:92vw;max-height:88vh;overflow:auto;">
+      <h3 style="margin-top:0;">Novo conteúdo — ${esc(currentBrand.nome)}</h3>
+      <div class="field"><label>Título interno</label><input id="np-titulo" type="text" placeholder="Event recap Juni Block Party"></div>
+      <div class="field"><label>Formato</label>
+        <select id="np-formato"><option value="reel">Reel</option><option value="feed">Feed</option><option value="story">Story</option><option value="carrossel">Carrossel</option></select>
+      </div>
+      <div class="field"><label>Arquivo (vídeo ou imagem)</label><input id="np-file" type="file" accept="video/*,image/*"></div>
+      <div class="field"><label>Legenda</label><textarea id="np-legenda" placeholder="Corpo da legenda (a assinatura padrão entra sozinha na hora de postar)"></textarea></div>
+      <div id="np-progress" class="muted"></div>
+      <div class="row" style="justify-content:flex-end;">
+        <button class="btn btn-outline" onclick="closeModal()">Cancelar</button>
+        <button class="btn btn-primary" id="np-submit" onclick="createPost()">Criar</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+async function createPost(){
+  const titulo = document.getElementById('np-titulo').value.trim();
+  const formato = document.getElementById('np-formato').value;
+  const legenda = document.getElementById('np-legenda').value;
+  const fileInput = document.getElementById('np-file');
+  const file = fileInput.files[0];
+  const progress = document.getElementById('np-progress');
+  const submitBtn = document.getElementById('np-submit');
+
+  if(!file){ toast('Escolhe um arquivo.'); return; }
+  submitBtn.disabled = true;
+  progress.textContent = 'Enviando arquivo...';
+
+  const path = `${currentBrand.id}/${Date.now()}-${file.name.replace(/[^a-zA-Z0-9.\-_]/g,'_')}`;
+  const { error: upErr } = await postaAiClient.storage.from(POSTA_AI_STORAGE_BUCKET).upload(path, file);
+  if(upErr){ progress.textContent = ''; toast('Erro no upload: '+upErr.message); submitBtn.disabled=false; return; }
+
+  const { data: pub } = postaAiClient.storage.from(POSTA_AI_STORAGE_BUCKET).getPublicUrl(path);
+  const tipo = file.type.startsWith('video') ? 'video' : 'imagem';
+
+  progress.textContent = 'Salvando post...';
+  const { error } = await postaAiClient.rpc('posta_ai_admin_create_post', {
+    p_brand_id: currentBrand.id, p_titulo: titulo, p_formato: formato, p_legenda: legenda,
+    p_assets: [{ url: pub.publicUrl, tipo, ordem: 0 }]
+  });
+  if(error){ progress.textContent=''; toast('Erro: '+error.message); submitBtn.disabled=false; return; }
+
+  closeModal();
+  toast('Conteúdo criado como rascunho.');
+  loadPosts();
+}
+
+function openSchedule(id){
+  document.getElementById('modal-root').innerHTML = `
+  <div class="center" style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:40;">
+    <div class="card" style="width:360px;max-width:92vw;">
+      <h3 style="margin-top:0;">Agendar</h3>
+      <div class="field"><label>Data e hora (fuso da marca: ${esc(currentBrand.timezone)})</label><input id="sc-date" type="datetime-local"></div>
+      <div class="row" style="justify-content:flex-end;">
+        <button class="btn btn-outline" onclick="closeModal()">Cancelar</button>
+        <button class="btn btn-primary" onclick="doSchedule('${id}')">Confirmar</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+async function doSchedule(id){
+  const val = document.getElementById('sc-date').value;
+  if(!val){ toast('Escolhe data e hora.'); return; }
+  const { error } = await postaAiClient.rpc('posta_ai_admin_set_schedule', { p_post_id: id, p_agendado_para: new Date(val).toISOString() });
+  if(error){ toast('Erro: '+error.message); return; }
+  closeModal();
+  toast('Agendado.');
+  loadPosts();
+}
+
+init();
+</script>
+</body>
+</html>

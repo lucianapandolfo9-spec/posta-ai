@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Posta Aí — aprovação de conteúdo</title>
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brandmark"><span class="dot"></span> Posta <span class="panda">Aí</span></div>
+  <div class="muted" id="brand-label"></div>
+</div>
+
+<div class="wrap" id="app">
+  <div class="empty"><div class="spinner" style="margin:0 auto 12px;"></div>Carregando seus conteúdos...</div>
+</div>
+
+<script src="config.js"></script>
+<script>
+const params = new URLSearchParams(location.search);
+const TOKEN = params.get('t');
+const appEl = document.getElementById('app');
+const brandLabel = document.getElementById('brand-label');
+
+function esc(s){ return (s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function toast(msg){
+  const t = document.createElement('div');
+  t.className = 'toast'; t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(()=>t.remove(), 2800);
+}
+function statusLabel(s){
+  return {rascunho:'Rascunho', em_aprovacao:'Aguardando você', ajuste_pedido:'Ajuste pedido',
+    aprovado:'Aprovado', agendado:'Agendado', publicando:'Publicando', publicado:'Publicado', falhou:'Falhou'}[s] || s;
+}
+
+async function loadFeed(){
+  if(!TOKEN){
+    appEl.innerHTML = `<div class="empty">Link inválido. Peça o link certo pra Luciana.</div>`;
+    return;
+  }
+  const { data, error } = await postaAiClient.rpc('posta_ai_client_feed', { p_token: TOKEN });
+  if(error){
+    appEl.innerHTML = `<div class="empty">Não consegui abrir seu conteúdo. Esse link pode ter expirado — pede um novo pra Luciana.</div>`;
+    return;
+  }
+  render(data || []);
+}
+
+function render(posts){
+  if(posts.length && posts[0].assinatura_padrao !== undefined){
+    // brand label não vem no feed; mantém genérico
+  }
+  const pending = posts.filter(p => p.status === 'em_aprovacao' || p.status === 'ajuste_pedido');
+  const history = posts.filter(p => !(p.status === 'em_aprovacao' || p.status === 'ajuste_pedido'));
+  const signature = posts.length ? posts[0].assinatura_padrao : '';
+
+  let html = '';
+
+  html += `<div class="card" style="margin-bottom:24px;">
+    <label>Assinatura padrão (aparece em todo post — edite aqui e vale pra tudo que vier depois)</label>
+    <textarea id="sig-field">${esc(signature)}</textarea>
+    <div class="row" style="margin-top:10px;justify-content:flex-end;">
+      <button class="btn btn-outline" onclick="saveSignature()">Salvar assinatura padrão</button>
+    </div>
+  </div>`;
+
+  if(pending.length === 0){
+    html += `<div class="empty">Nenhum conteúdo esperando aprovação agora. 🎬</div>`;
+  } else {
+    html += `<h3 style="color:var(--texto-suave);font-size:13px;text-transform:uppercase;letter-spacing:.5px;">Esperando você</h3>`;
+    pending.forEach(p => { html += postCard(p); });
+  }
+
+  if(history.length){
+    html += `<div class="card" style="margin-top:32px;">
+      <label>Histórico</label>
+      ${history.map(p => `
+        <div class="history-item">
+          <div>${esc(p.titulo_interno || 'Sem título')} <span class="muted">— ${new Date(p.criado_em).toLocaleDateString('pt-BR')}</span></div>
+          <span class="tag tag-${p.status}">${statusLabel(p.status)}</span>
+        </div>
+      `).join('')}
+    </div>`;
+  }
+
+  appEl.innerHTML = html;
+}
+
+function postCard(p){
+  const assets = p.assets || [];
+  const mediaHtml = assets.map(a => a.tipo === 'video'
+    ? `<video src="${esc(a.url)}" controls playsinline preload="metadata"></video>`
+    : `<img src="${esc(a.url)}" style="width:100%;border-radius:10px;">`
+  ).join('<div style="height:10px;"></div>');
+
+  const comments = (p.comentarios || []).map(c =>
+    `<div class="comment"><b>${c.autor === 'editor' ? 'Luciana' : 'Você'}:</b> ${esc(c.texto)}</div>`
+  ).join('');
+
+  return `
+  <div class="card pending-post" data-id="${p.id}">
+    <div class="head">
+      <h4 style="margin:0;">${esc(p.titulo_interno || 'Novo conteúdo')}</h4>
+      <span class="tag tag-${p.status}">${statusLabel(p.status)}</span>
+    </div>
+    ${mediaHtml}
+    <div class="field" style="margin-top:14px;">
+      <label>Legenda desse post</label>
+      <textarea class="caption-field">${esc(p.legenda_atual)}</textarea>
+    </div>
+    ${comments ? `<div style="margin-bottom:12px;">${comments}</div>` : ''}
+    <div class="field">
+      <label>Comentário (opcional)</label>
+      <textarea class="comment-field" placeholder="Ex: troca a cor do texto, corta os 2 primeiros segundos..."></textarea>
+    </div>
+    <div class="row">
+      <button class="btn btn-approve" onclick="decide('${p.id}','aprovado',this)">✅ Aprovar</button>
+      <button class="btn btn-adjust" onclick="decide('${p.id}','ajuste_pedido',this)">✍️ Pedir ajuste</button>
+    </div>
+  </div>`;
+}
+
+async function decide(postId, decisao, btn){
+  const card = document.querySelector(`.pending-post[data-id="${postId}"]`);
+  const legenda = card.querySelector('.caption-field').value;
+  const comentario = card.querySelector('.comment-field').value;
+
+  if(decisao === 'ajuste_pedido' && !comentario.trim()){
+    toast('Escreve o que quer ajustar no campo de comentário.');
+    return;
+  }
+
+  card.querySelectorAll('button').forEach(b => b.disabled = true);
+  const { error } = await postaAiClient.rpc('posta_ai_client_decide', {
+    p_token: TOKEN, p_post_id: postId, p_decisao: decisao,
+    p_comentario: comentario || null, p_legenda: legenda || null
+  });
+  if(error){
+    toast('Deu erro, tenta de novo.');
+    card.querySelectorAll('button').forEach(b => b.disabled = false);
+    return;
+  }
+  toast(decisao === 'aprovado' ? 'Aprovado!' : 'Ajuste enviado pra Luciana.');
+  loadFeed();
+}
+
+async function saveSignature(){
+  const val = document.getElementById('sig-field').value;
+  const { error } = await postaAiClient.rpc('posta_ai_client_update_signature', { p_token: TOKEN, p_conteudo: val });
+  if(error){ toast('Não consegui salvar, tenta de novo.'); return; }
+  toast('Assinatura padrão atualizada.');
+}
+
+loadFeed();
+</script>
+</body>
+</html>

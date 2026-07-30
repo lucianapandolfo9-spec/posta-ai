@@ -1,17 +1,24 @@
-# Posta Aí — portal de aprovação de conteúdo
+# aprovi.ai — portal de aprovação de conteúdo
 
 **Documento mestre — ler primeiro ao retomar.**
 
-Produto próprio da Luh Panda: portal onde o cliente aprova (ou pede ajuste em) cada
-criativo antes de ir pro ar, sem WhatsApp bagunçado nem print perdido. Nasceu do
-projeto da Gigi (Lymphatic by Gigi), mas foi desenhado desde a primeira tabela pra
-aguentar dezenas de clientes e, no futuro, ser vendido pra outras agências.
+Produto próprio da Luh Panda (nome comercial: **aprovi.ai**, ex-"Posta Aí"): portal
+onde o cliente aprova (ou pede ajuste em) cada criativo antes de ir pro ar, sem
+WhatsApp bagunçado nem print perdido. Nasceu do projeto da Gigi (Lymphatic by Gigi),
+mas foi desenhado desde a primeira tabela pra aguentar dezenas de clientes e, no
+futuro, ser vendido pra outras agências. Meta: subir num domínio próprio sob
+luhpanda.com.br quando estiver pronto — a URL do GitHub Pages abaixo é provisória.
+
+**Nota técnica:** o rename foi só de marca/nome visível. Por baixo, Supabase ainda
+usa os nomes antigos (`posta_ai` como schema, funções `posta_ai_*`, bucket
+`posta-ai-media`) — são internos, invisíveis pro usuário, e renomear exigiria
+migração de banco em produção sem necessidade real. Não renomear isso sem motivo forte.
 
 ## Onde está tudo
 
-- **Repo local:** `/Users/luhpanda/Downloads/Luh Panda/posta-ai`
-- **Remote:** `https://github.com/lucianapandolfo9-spec/posta-ai` (branch `main`, **repo público** — necessário pro GitHub Pages grátis; seguro porque a chave anon do Supabase é feita pra ficar exposta, e todo acesso passa por RLS + funções travadas, nunca pela chave)
-- **URL publicada:** https://lucianapandolfo9-spec.github.io/posta-ai/
+- **Repo local:** `/Users/luhpanda/Downloads/Luh Panda/aprovi-ai`
+- **Remote:** `https://github.com/lucianapandolfo9-spec/aprovi-ai` (branch `main`, **repo público** — necessário pro GitHub Pages grátis; seguro porque a chave anon do Supabase é feita pra ficar exposta, e todo acesso passa por RLS + funções travadas, nunca pela chave)
+- **URL publicada:** https://lucianapandolfo9-spec.github.io/aprovi-ai/ (provisória — vai migrar pra domínio próprio)
   - `index.html` — painel da Luciana (login, marcas, kanban, upload, edição)
   - `cliente.html?t=<token>` — tela do cliente (link secreto por marca, sem login)
 - **Backend:** Supabase, projeto `arroba-certa` (`tscnqvuzlfagotirgjbz`) — **schema isolado `posta_ai`**, não mexe em nada do @certo. Motivo: conta free só permite 2 projetos Supabase ativos por org, já ocupados por `auditor-folha-capitalize` e `arroba-certa`.
@@ -99,7 +106,7 @@ conteúdo aprovado de ponta a ponta foi o recap do evento Juni Block Party.
   *tester* (sem precisar de App Review enquanto for baixo volume).
 - Pré-requisito por cliente: Instagram Business/Creator vinculado a uma Página do
   Facebook (no caso da Gigi, já é pendência existente do projeto dela no Notion —
-  serve pras duas frentes de uma vez: anúncios pagos e Posta Aí).
+  serve pras duas frentes de uma vez: anúncios pagos e aprovi.ai).
 - Gatilho: mudança de status pra `aprovado` em `post_events` → webhook do Supabase
   → função de publicação.
 

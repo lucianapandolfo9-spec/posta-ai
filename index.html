@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Posta Aí — painel</title>
+<title>aprovi.ai — painel</title>
 <link rel="stylesheet" href="style.css">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 </head>
@@ -46,7 +46,7 @@ async function init(){
 
 function renderLogin(){
   root.innerHTML = `
-  <div class="topbar"><div class="brandmark"><span class="dot"></span> Posta <span class="panda">Aí</span></div></div>
+  <div class="topbar"><div class="brandmark"><span class="dot"></span> aprovi<span class="panda">.ai</span></div></div>
   <div class="login-box card">
     <h2 style="margin-top:0;">Entrar</h2>
     <p class="muted">Link mágico direto pro seu e-mail.</p>
@@ -79,7 +79,7 @@ async function render(){
 
   root.innerHTML = `
   <div class="topbar">
-    <div class="brandmark"><span class="dot"></span> Posta <span class="panda">Aí</span></div>
+    <div class="brandmark"><span class="dot"></span> aprovi<span class="panda">.ai</span></div>
     <div class="row">
       <span class="muted">${esc(session.user.email)}</span>
       <button class="btn btn-outline" onclick="logout()">Sair</button>
